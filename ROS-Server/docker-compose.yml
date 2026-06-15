@@ -1,0 +1,32 @@
+services:
+  ros-master:
+    image: ros:noetic-ros-base-focal
+    container_name: ros-master
+    network_mode: host
+    environment:
+      ROS_MASTER_URI: http://${ROS_HOST_IP:-192.168.0.190}:11311
+      ROS_IP: ${ROS_HOST_IP:-192.168.0.190}
+    command: bash -lc "source /opt/ros/noetic/setup.bash && roscore"
+    restart: unless-stopped
+
+  rosbag-play:
+    image: ros:noetic-ros-base-focal
+    container_name: rosbag-play-ga25
+    network_mode: host
+    depends_on:
+      - ros-master
+    environment:
+      ROS_MASTER_URI: http://${ROS_HOST_IP:-192.168.0.190}:11311
+      ROS_IP: ${ROS_HOST_IP:-192.168.0.190}
+    volumes:
+      - /mnt:/mnt:ro
+    command: >
+      bash -lc "
+        source /opt/ros/noetic/setup.bash &&
+        until rostopic list >/dev/null 2>&1; do
+          echo 'waiting for roscore...';
+          sleep 1;
+        done &&
+        rosbag play -l /mnt/NAS2/pjt_AI/00-git-archive/lidar-pytorch/data/seoulsi_yeoui/training/velodyne/lidar_sync.bag
+      "
+    restart: unless-stopped
