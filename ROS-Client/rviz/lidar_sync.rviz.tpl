@@ -7,6 +7,7 @@ Panels:
         - /Global Options1
         - /Grid1
         - /lidar_sync1
+        - /pointpillar_boxes1
       Splitter Ratio: 0.5
     Tree Height: 520
   - Class: rviz/Views
@@ -64,6 +65,14 @@ Visualization Manager:
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: __POINTPILLAR_BOXES_TOPIC__
+      Name: pointpillar_boxes
+      Namespaces:
+        pointpillar_boxes: true
+      Queue Size: 10
       Value: true
   Enabled: true
   Global Options:

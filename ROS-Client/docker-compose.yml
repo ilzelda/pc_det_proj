@@ -26,6 +26,7 @@ services:
       ROS_MASTER_URI: ${ROS_MASTER_URI:-http://192.168.0.190:11311}
       ROS_IP: ${ROS_IP:-}
       LIDAR_TOPIC: ${LIDAR_TOPIC:-/lidar_sync}
+      POINTPILLAR_BOXES_TOPIC: ${POINTPILLAR_BOXES_TOPIC:-/pointpillar/boxes}
       RVIZ_FIXED_FRAME: ${RVIZ_FIXED_FRAME:-livox_frame}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -63,11 +64,13 @@ services:
         mkdir -p /tmp/rviz
         sed \
           -e "s#__LIDAR_TOPIC__#$${LIDAR_TOPIC}#g" \
+          -e "s#__POINTPILLAR_BOXES_TOPIC__#$${POINTPILLAR_BOXES_TOPIC}#g" \
           -e "s#__FIXED_FRAME__#$${RVIZ_FIXED_FRAME}#g" \
           /rviz/lidar_sync.rviz.tpl > /tmp/rviz/lidar_sync.rviz
 
         echo "ROS_MASTER_URI=$${ROS_MASTER_URI}"
         echo "ROS_IP=$${ROS_IP}"
         echo "LIDAR_TOPIC=$${LIDAR_TOPIC}"
+        echo "POINTPILLAR_BOXES_TOPIC=$${POINTPILLAR_BOXES_TOPIC}"
         echo "RVIZ_FIXED_FRAME=$${RVIZ_FIXED_FRAME}"
         rviz -d /tmp/rviz/lidar_sync.rviz

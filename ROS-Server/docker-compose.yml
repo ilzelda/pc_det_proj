@@ -11,7 +11,7 @@ services:
 
   rosbag-play:
     image: ros:noetic-ros-base-focal
-    container_name: rosbag-play-ga25
+    container_name: rosbag-play
     network_mode: host
     depends_on:
       - ros-master
@@ -28,5 +28,44 @@ services:
           sleep 1;
         done &&
         rosbag play -l /mnt/NAS2/pjt_AI/00-git-archive/lidar-pytorch/data/seoulsi_yeoui/training/velodyne/lidar_sync.bag
+      "
+    restart: unless-stopped
+
+  pointpillar-ros:
+    build:
+      context: ..
+      dockerfile: CUDA-PointPillars/docker/Dockerfile.ros-arm64
+    image: pointpillar-ros-arm64:latest
+    container_name: pointpillar-ros
+    network_mode: host
+    ipc: host
+    runtime: nvidia
+    depends_on:
+      - ros-master
+    environment:
+      ROS_MASTER_URI: http://${ROS_HOST_IP:-192.168.0.190}:11311
+      ROS_IP: ${ROS_HOST_IP:-192.168.0.190}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      LIDAR_TOPIC: ${LIDAR_TOPIC:-/lidar_sync}
+      POINTPILLAR_BOXES_TOPIC: ${POINTPILLAR_BOXES_TOPIC:-/pointpillar/boxes}
+      POINTPILLAR_ENGINE: ${POINTPILLAR_ENGINE:-/workspace/CUDA-PointPillars/model/pointpillar.plan}
+      POINTPILLAR_TIMER: ${POINTPILLAR_TIMER:-false}
+    volumes:
+      - ../CUDA-PointPillars:/workspace/CUDA-PointPillars:rw
+    working_dir: /workspace/CUDA-PointPillars
+    command: >
+      bash -lc "
+        source /opt/ros/noetic/setup.bash &&
+        until rostopic list >/dev/null 2>&1; do
+          echo 'waiting for roscore...';
+          sleep 1;
+        done &&
+        source tool/environment.sh &&
+        mkdir -p build_ros_container &&
+        cd build_ros_container &&
+        cmake .. &&
+        make -j$$(nproc) &&
+        ./pointpillar_ros_node _input_topic:=$${LIDAR_TOPIC} _boxes_topic:=$${POINTPILLAR_BOXES_TOPIC} _engine_path:=$${POINTPILLAR_ENGINE} _timer:=$${POINTPILLAR_TIMER}
       "
     restart: unless-stopped
