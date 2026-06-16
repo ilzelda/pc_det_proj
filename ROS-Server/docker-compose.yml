@@ -51,6 +51,10 @@ services:
       POINTPILLAR_BOXES_TOPIC: ${POINTPILLAR_BOXES_TOPIC:-/pointpillar/boxes}
       POINTPILLAR_ENGINE: ${POINTPILLAR_ENGINE:-/workspace/CUDA-PointPillars/model/pointpillar.plan}
       POINTPILLAR_TIMER: ${POINTPILLAR_TIMER:-false}
+      POINTPILLAR_MIN_Z: ${POINTPILLAR_MIN_Z:--3.0}
+      POINTPILLAR_MAX_Z: ${POINTPILLAR_MAX_Z:-1.0}
+      POINTPILLAR_Z_OFFSET: ${POINTPILLAR_Z_OFFSET:-0.0}
+      POINTPILLAR_MAX_NMS_BOXES: ${POINTPILLAR_MAX_NMS_BOXES:-4096}
     volumes:
       - ../CUDA-PointPillars:/workspace/CUDA-PointPillars:rw
     working_dir: /workspace/CUDA-PointPillars
@@ -62,10 +66,16 @@ services:
           sleep 1;
         done &&
         source tool/environment.sh &&
+        echo '--- source check: lidar-postprocess.cu:467-482 ---' &&
+        nl -ba src/pointpillar/lidar-postprocess.cu | sed -n '467,482p' &&
+        echo '--- removing stale build_ros_container ---' &&
+        rm -rf build_ros_container &&
         mkdir -p build_ros_container &&
         cd build_ros_container &&
         cmake .. &&
-        make -j$$(nproc) &&
-        ./pointpillar_ros_node _input_topic:=$${LIDAR_TOPIC} _boxes_topic:=$${POINTPILLAR_BOXES_TOPIC} _engine_path:=$${POINTPILLAR_ENGINE} _timer:=$${POINTPILLAR_TIMER}
+        cmake --build . -- -j$$(nproc) &&
+        export LD_LIBRARY_PATH=$$(pwd):$${LD_LIBRARY_PATH} &&
+        echo \"LD_LIBRARY_PATH=$${LD_LIBRARY_PATH}\" &&
+        ./pointpillar_ros_node _input_topic:=$${LIDAR_TOPIC} _boxes_topic:=$${POINTPILLAR_BOXES_TOPIC} _engine_path:=$${POINTPILLAR_ENGINE} _timer:=$${POINTPILLAR_TIMER} _min_z:=$${POINTPILLAR_MIN_Z} _max_z:=$${POINTPILLAR_MAX_Z} _z_offset:=$${POINTPILLAR_Z_OFFSET} _max_nms_boxes:=$${POINTPILLAR_MAX_NMS_BOXES}
       "
     restart: unless-stopped

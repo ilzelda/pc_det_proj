@@ -467,16 +467,25 @@ public:
 
         thrust::device_ptr<combined_float> thr_bndbox_((combined_float *)bndbox_);
         thrust::stable_sort_by_key(thrust::cuda::par.on(_stream), score_, score_ + bndbox_num_, thr_bndbox_, thrust::greater<float>());
-        checkRuntime(nms_launch(bndbox_num_, bndbox_, param_.nms_thresh, h_mask_, _stream));
+        const unsigned int nms_box_num = std::min(bndbox_num_, param_.max_nms_boxes);
+        if (bndbox_num_ > nms_box_num) {
+            printf("NMS candidate count %u exceeds max_nms_boxes %u. Keeping top scored candidates only.\n",
+                   bndbox_num_, nms_box_num);
+        }
+        if (nms_box_num == 0) {
+            bndbox_num_after_nms_ = 0;
+            return;
+        }
+        checkRuntime(nms_launch(nms_box_num, bndbox_, param_.nms_thresh, h_mask_, _stream));
 
-        checkRuntime(cudaMemcpyAsync(h_bndbox_, bndbox_, bndbox_num_ * 9 * sizeof(float), cudaMemcpyDeviceToHost, _stream));
+        checkRuntime(cudaMemcpyAsync(h_bndbox_, bndbox_, nms_box_num * 9 * sizeof(float), cudaMemcpyDeviceToHost, _stream));
         checkRuntime(cudaStreamSynchronize(_stream));
 
-        int col_blocks = DIVUP(bndbox_num_, NMS_THREADS_PER_BLOCK);
+        int col_blocks = DIVUP(nms_box_num, NMS_THREADS_PER_BLOCK);
         memset(remv_.data(), 0, col_blocks * sizeof(uint64_t));
         bndbox_num_after_nms_ = 0;
 
-        for (unsigned int i_nms = 0; i_nms < bndbox_num_; i_nms++) {
+        for (unsigned int i_nms = 0; i_nms < nms_box_num; i_nms++) {
             unsigned int nblock = i_nms / NMS_THREADS_PER_BLOCK;
             unsigned int inblock = i_nms % NMS_THREADS_PER_BLOCK;
 

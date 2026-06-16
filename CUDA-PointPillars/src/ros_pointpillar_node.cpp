@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -127,10 +128,13 @@ std_msgs::ColorRGBA colorForClass(int class_id, float alpha) {
   return color;
 }
 
-pointpillar::lidar::CoreParameter makeCoreParameter(const std::string& engine_path) {
+pointpillar::lidar::CoreParameter makeCoreParameter(const std::string& engine_path,
+                                                    float min_z,
+                                                    float max_z,
+                                                    unsigned int max_nms_boxes) {
   pointpillar::lidar::VoxelizationParameter vp;
-  vp.min_range = nvtype::Float3(0.0f, -39.68f, -3.0f);
-  vp.max_range = nvtype::Float3(69.12f, 39.68f, 1.0f);
+  vp.min_range = nvtype::Float3(0.0f, -39.68f, min_z);
+  vp.max_range = nvtype::Float3(69.12f, 39.68f, max_z);
   vp.voxel_size = nvtype::Float3(0.16f, 0.16f, 4.0f);
   vp.grid_size = vp.compute_grid_size(vp.max_range, vp.min_range, vp.voxel_size);
   vp.max_voxels = 40000;
@@ -142,6 +146,7 @@ pointpillar::lidar::CoreParameter makeCoreParameter(const std::string& engine_pa
   pp.min_range = vp.min_range;
   pp.max_range = vp.max_range;
   pp.feature_size = nvtype::Int2(vp.grid_size.x / 2, vp.grid_size.y / 2);
+  pp.max_nms_boxes = max_nms_boxes;
 
   pointpillar::lidar::CoreParameter param;
   param.voxelization = vp;
@@ -162,8 +167,21 @@ class PointPillarRosNode {
     private_nh_.param<bool>("timer", timer_, false);
     private_nh_.param<double>("marker_lifetime", marker_lifetime_sec_, 0.1);
     private_nh_.param<double>("marker_alpha", marker_alpha_, 0.65);
+    private_nh_.param<double>("min_z", min_z_, -3.0);
+    private_nh_.param<double>("max_z", max_z_, 1.0);
+    private_nh_.param<double>("z_offset", z_offset_, 0.0);
+    private_nh_.param<int>("max_nms_boxes", max_nms_boxes_, 4096);
 
-    auto core_param = makeCoreParameter(engine_path_);
+    if (std::abs((max_z_ - min_z_) - 4.0) > 1e-3) {
+      ROS_WARN_STREAM("Configured z range is " << (max_z_ - min_z_)
+                      << "m. The current PointPillars model is configured with z voxel size 4.0m; "
+                      << "keeping max_z - min_z near 4.0 is recommended.");
+    }
+
+    auto core_param = makeCoreParameter(engine_path_,
+                                        static_cast<float>(min_z_),
+                                        static_cast<float>(max_z_),
+                                        static_cast<unsigned int>(std::max(max_nms_boxes_, 1)));
     core_ = pointpillar::lidar::create_core(core_param);
     if (core_ == nullptr) {
       throw std::runtime_error("failed to create CUDA-PointPillars core with engine: " + engine_path_);
@@ -177,7 +195,10 @@ class PointPillarRosNode {
     cloud_sub_ = nh_.subscribe(input_topic_, 1, &PointPillarRosNode::cloudCallback, this);
 
     ROS_INFO_STREAM("CUDA-PointPillars ROS node ready. Subscribing " << input_topic_
-                    << ", publishing " << boxes_topic_ << ", engine " << engine_path_);
+                    << ", publishing " << boxes_topic_ << ", engine " << engine_path_
+                    << ", z range [" << min_z_ << ", " << max_z_ << "]"
+                    << ", z offset " << z_offset_
+                    << ", max NMS boxes " << max_nms_boxes_);
   }
 
   ~PointPillarRosNode() {
@@ -197,6 +218,8 @@ class PointPillarRosNode {
     const auto boxes = core_->forward(points.data(), num_points, stream_);
     publishMarkers(*cloud, boxes);
 
+    ROS_INFO_STREAM_THROTTLE(1.0, "PointPillars processed " << num_points
+                             << " points, detections: " << boxes.size());
     ROS_DEBUG_STREAM("PointPillars processed " << num_points << " points, detections: " << boxes.size());
   }
 
@@ -223,6 +246,11 @@ class PointPillarRosNode {
     points.clear();
     points.reserve(point_count * 4);
 
+    float raw_min_z = std::numeric_limits<float>::max();
+    float raw_max_z = std::numeric_limits<float>::lowest();
+    float adjusted_min_z = std::numeric_limits<float>::max();
+    float adjusted_max_z = std::numeric_limits<float>::lowest();
+
     for (size_t i = 0; i < point_count; ++i) {
       const uint8_t* point = cloud.data.data() + i * cloud.point_step;
       const float px = readFieldAsFloat(point, x);
@@ -234,10 +262,23 @@ class PointPillarRosNode {
         continue;
       }
 
+      const float adjusted_z = pz + static_cast<float>(z_offset_);
+      raw_min_z = std::min(raw_min_z, pz);
+      raw_max_z = std::max(raw_max_z, pz);
+      adjusted_min_z = std::min(adjusted_min_z, adjusted_z);
+      adjusted_max_z = std::max(adjusted_max_z, adjusted_z);
+
       points.push_back(px);
       points.push_back(py);
-      points.push_back(pz);
+      points.push_back(adjusted_z);
       points.push_back(pi);
+    }
+
+    if (!points.empty()) {
+      ROS_INFO_STREAM_THROTTLE(1.0, "PointCloud2 z raw [" << raw_min_z << ", " << raw_max_z
+                               << "], adjusted [" << adjusted_min_z << ", " << adjusted_max_z
+                               << "], model z range [" << min_z_ << ", " << max_z_
+                               << "], z_offset " << z_offset_);
     }
 
     return !points.empty();
@@ -268,7 +309,7 @@ class PointPillarRosNode {
       marker.action = visualization_msgs::Marker::ADD;
       marker.pose.position.x = box.x;
       marker.pose.position.y = box.y;
-      marker.pose.position.z = box.z;
+      marker.pose.position.z = box.z - z_offset_;
       marker.pose.orientation = yawToQuaternion(box.rt);
       marker.scale.x = std::max(box.l, 0.01f);
       marker.scale.y = std::max(box.w, 0.01f);
@@ -295,6 +336,10 @@ class PointPillarRosNode {
   bool timer_ = false;
   double marker_lifetime_sec_ = 0.1;
   double marker_alpha_ = 0.65;
+  double min_z_ = -3.0;
+  double max_z_ = 1.0;
+  double z_offset_ = 0.0;
+  int max_nms_boxes_ = 4096;
 };
 
 }  // namespace
