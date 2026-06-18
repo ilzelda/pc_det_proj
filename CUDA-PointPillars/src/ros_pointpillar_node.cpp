@@ -311,8 +311,8 @@ class PointPillarRosNode {
       marker.pose.position.y = box.y;
       marker.pose.position.z = box.z - z_offset_;
       marker.pose.orientation = yawToQuaternion(box.rt);
-      marker.scale.x = std::max(box.l, 0.01f);
-      marker.scale.y = std::max(box.w, 0.01f);
+      marker.scale.x = std::max(box.w, 0.01f);
+      marker.scale.y = std::max(box.l, 0.01f);
       marker.scale.z = std::max(box.h, 0.01f);
       marker.color = colorForClass(box.id, static_cast<float>(marker_alpha_));
       marker.lifetime = ros::Duration(marker_lifetime_sec_);
