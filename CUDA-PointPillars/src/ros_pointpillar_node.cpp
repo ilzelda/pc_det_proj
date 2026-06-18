@@ -169,7 +169,7 @@ class PointPillarRosNode {
     private_nh_.param<double>("marker_alpha", marker_alpha_, 0.65);
     private_nh_.param<double>("min_z", min_z_, -3.0);
     private_nh_.param<double>("max_z", max_z_, 1.0);
-    private_nh_.param<double>("z_offset", z_offset_, 0.0);
+    private_nh_.param<double>("z_offset", z_offset_, 4.0);
     private_nh_.param<int>("max_nms_boxes", max_nms_boxes_, 4096);
 
     if (std::abs((max_z_ - min_z_) - 4.0) > 1e-3) {
@@ -338,7 +338,7 @@ class PointPillarRosNode {
   double marker_alpha_ = 0.65;
   double min_z_ = -3.0;
   double max_z_ = 1.0;
-  double z_offset_ = 0.0;
+  double z_offset_ = 4.0;
   int max_nms_boxes_ = 4096;
 };
 

@@ -1,5 +1,6 @@
 import copy
 import pickle
+from pathlib import Path
 
 import numpy as np
 from skimage import io
@@ -30,7 +31,30 @@ class KittiDataset(DatasetTemplate):
         self.sample_id_list = [x.strip() for x in open(split_dir).readlines()] if split_dir.exists() else None
 
         self.kitti_infos = []
+        self.lidar_z_offset = float(self.dataset_cfg.get('LIDAR_Z_OFFSET', 0.0))
         self.include_kitti_data(self.mode)
+
+    def apply_lidar_z_offset(self, points=None, gt_boxes=None):
+        if abs(self.lidar_z_offset) < 1e-6:
+            return points, gt_boxes
+
+        if points is not None and points.shape[0] > 0:
+            points = points.copy()
+            points[:, 2] += self.lidar_z_offset
+
+        if gt_boxes is not None and gt_boxes.shape[0] > 0:
+            gt_boxes = gt_boxes.copy()
+            gt_boxes[:, 2] += self.lidar_z_offset
+
+        return points, gt_boxes
+
+    def remove_lidar_z_offset_from_boxes(self, boxes):
+        if abs(self.lidar_z_offset) < 1e-6 or boxes.shape[0] == 0:
+            return boxes
+
+        boxes = boxes.copy()
+        boxes[:, 2] -= self.lidar_z_offset
+        return boxes
 
     def include_kitti_data(self, mode):
         if self.logger is not None:
@@ -54,6 +78,7 @@ class KittiDataset(DatasetTemplate):
         super().__init__(
             dataset_cfg=self.dataset_cfg, class_names=self.class_names, training=self.training, root_path=self.root_path, logger=self.logger
         )
+        self.lidar_z_offset = float(self.dataset_cfg.get('LIDAR_Z_OFFSET', 0.0))
         self.split = split
         self.root_split_path = self.root_path / ('training' if self.split != 'test' else 'testing')
 
@@ -195,14 +220,16 @@ class KittiDataset(DatasetTemplate):
                 l, h, w = dims[:, 0:1], dims[:, 1:2], dims[:, 2:3]
                 loc_lidar[:, 2] += h[:, 0] / 2
                 gt_boxes_lidar = np.concatenate([loc_lidar, l, w, h, -(np.pi / 2 + rots[..., np.newaxis])], axis=1)
+                _, gt_boxes_lidar = self.apply_lidar_z_offset(gt_boxes=gt_boxes_lidar)
                 annotations['gt_boxes_lidar'] = gt_boxes_lidar
 
                 info['annos'] = annotations
 
                 if count_inside_pts:
-                    points = self.get_lidar(sample_idx)
+                    raw_points = self.get_lidar(sample_idx)
+                    points, _ = self.apply_lidar_z_offset(points=raw_points)
                     calib = self.get_calib(sample_idx)
-                    pts_rect = calib.lidar_to_rect(points[:, 0:3])
+                    pts_rect = calib.lidar_to_rect(raw_points[:, 0:3])
 
                     fov_flag = self.get_fov_flag(pts_rect, info['image']['image_shape'], calib)
                     pts_fov = points[fov_flag]
@@ -238,6 +265,7 @@ class KittiDataset(DatasetTemplate):
             info = infos[k]
             sample_idx = info['point_cloud']['lidar_idx']
             points = self.get_lidar(sample_idx)
+            points, _ = self.apply_lidar_z_offset(points=points)
             annos = info['annos']
             names = annos['name']
             difficulty = annos['difficulty']
@@ -273,8 +301,7 @@ class KittiDataset(DatasetTemplate):
         with open(db_info_save_path, 'wb') as f:
             pickle.dump(all_db_infos, f)
 
-    @staticmethod
-    def generate_prediction_dicts(batch_dict, pred_dicts, class_names, output_path=None):
+    def generate_prediction_dicts(self, batch_dict, pred_dicts, class_names, output_path=None):
         """
         Args:
             batch_dict:
@@ -302,6 +329,7 @@ class KittiDataset(DatasetTemplate):
         def generate_single_sample_dict(batch_index, box_dict):
             pred_scores = box_dict['pred_scores'].cpu().numpy()
             pred_boxes = box_dict['pred_boxes'].cpu().numpy()
+            pred_boxes = self.remove_lidar_z_offset_from_boxes(pred_boxes)
             pred_labels = box_dict['pred_labels'].cpu().numpy()
             pred_dict = get_template_prediction(pred_scores.shape[0])
             if pred_scores.shape[0] == 0:
@@ -392,6 +420,7 @@ class KittiDataset(DatasetTemplate):
             gt_names = annos['name']
             gt_boxes_camera = np.concatenate([loc, dims, rots[..., np.newaxis]], axis=1).astype(np.float32)
             gt_boxes_lidar = box_utils.boxes3d_kitti_camera_to_lidar(gt_boxes_camera, calib)
+            _, gt_boxes_lidar = self.apply_lidar_z_offset(gt_boxes=gt_boxes_lidar)
 
             input_dict.update({
                 'gt_names': gt_names,
@@ -410,6 +439,7 @@ class KittiDataset(DatasetTemplate):
                 pts_rect = calib.lidar_to_rect(points[:, 0:3])
                 fov_flag = self.get_fov_flag(pts_rect, img_shape, calib)
                 points = points[fov_flag]
+            points, _ = self.apply_lidar_z_offset(points=points)
             input_dict['points'] = points
 
         if "images" in get_item_list:
@@ -456,10 +486,13 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
     print('Kitti info trainval file is saved to %s' % trainval_filename)
 
     dataset.set_split('test')
-    kitti_infos_test = dataset.get_infos(num_workers=workers, has_label=False, count_inside_pts=False)
-    with open(test_filename, 'wb') as f:
-        pickle.dump(kitti_infos_test, f)
-    print('Kitti info test file is saved to %s' % test_filename)
+    if dataset.sample_id_list is None:
+        print('Skip Kitti info test file because ImageSets/test.txt does not exist.')
+    else:
+        kitti_infos_test = dataset.get_infos(num_workers=workers, has_label=False, count_inside_pts=False)
+        with open(test_filename, 'wb') as f:
+            pickle.dump(kitti_infos_test, f)
+        print('Kitti info test file is saved to %s' % test_filename)
 
     print('---------------Start create groundtruth database for data augmentation---------------')
     dataset.set_split(train_split)
@@ -476,9 +509,12 @@ if __name__ == '__main__':
         from easydict import EasyDict
         dataset_cfg = EasyDict(yaml.safe_load(open(sys.argv[2])))
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
+        data_path = Path(dataset_cfg.DATA_PATH)
+        if not data_path.is_absolute():
+            data_path = (ROOT_DIR / 'tools' / data_path).resolve()
         create_kitti_infos(
             dataset_cfg=dataset_cfg,
             class_names=['Car', 'Pedestrian', 'Cyclist'],
-            data_path=ROOT_DIR / 'data' / 'kitti',
-            save_path=ROOT_DIR / 'data' / 'kitti'
+            data_path=data_path,
+            save_path=data_path
         )

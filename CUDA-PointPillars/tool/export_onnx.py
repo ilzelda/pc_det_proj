@@ -102,7 +102,7 @@ def main():
 
     with torch.no_grad():
 
-      MAX_VOXELS = 10000
+      MAX_VOXELS = cfg.DATA_CONFIG.DATA_PROCESSOR[-1].MAX_NUMBER_OF_VOXELS['test']
 
       dummy_voxels = torch.zeros(
           (MAX_VOXELS, 32, 4),
