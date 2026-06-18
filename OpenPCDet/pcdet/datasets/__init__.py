@@ -12,8 +12,12 @@ from .waymo.waymo_dataset import WaymoDataset
 from .pandaset.pandaset_dataset import PandasetDataset
 from .lyft.lyft_dataset import LyftDataset
 from .once.once_dataset import ONCEDataset
-from .argo2.argo2_dataset import Argo2Dataset
 from .custom.custom_dataset import CustomDataset
+
+try:
+    from .argo2.argo2_dataset import Argo2Dataset
+except (ImportError, TypeError):
+    Argo2Dataset = None
 
 __all__ = {
     'DatasetTemplate': DatasetTemplate,
@@ -23,9 +27,11 @@ __all__ = {
     'PandasetDataset': PandasetDataset,
     'LyftDataset': LyftDataset,
     'ONCEDataset': ONCEDataset,
-    'CustomDataset': CustomDataset,
-    'Argo2Dataset': Argo2Dataset
+    'CustomDataset': CustomDataset
 }
+
+if Argo2Dataset is not None:
+    __all__['Argo2Dataset'] = Argo2Dataset
 
 
 class DistributedSampler(_DistributedSampler):
@@ -54,7 +60,14 @@ class DistributedSampler(_DistributedSampler):
 def build_dataloader(dataset_cfg, class_names, batch_size, dist, root_path=None, workers=4, seed=None,
                      logger=None, training=True, merge_all_iters_to_one_epoch=False, total_epochs=0):
 
-    dataset = __all__[dataset_cfg.DATASET](
+    dataset_cls = __all__.get(dataset_cfg.DATASET)
+    if dataset_cls is None:
+        raise ValueError(
+            f'Unknown or unavailable dataset {dataset_cfg.DATASET}. '
+            f'Available datasets: {", ".join(sorted(__all__.keys()))}'
+        )
+
+    dataset = dataset_cls(
         dataset_cfg=dataset_cfg,
         class_names=class_names,
         root_path=root_path,

@@ -39,7 +39,7 @@ class DataBaseSampler(object):
 
             with open(str(db_info_path), 'rb') as f:
                 infos = pickle.load(f)
-                [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
+                [self.db_infos[cur_class].extend(infos.get(cur_class, [])) for cur_class in class_names]
 
         for func_name, val in sampler_cfg.PREPARE.items():
             self.db_infos = getattr(self, func_name)(self.db_infos, val)
@@ -53,6 +53,10 @@ class DataBaseSampler(object):
         for x in sampler_cfg.SAMPLE_GROUPS:
             class_name, sample_num = x.split(':')
             if class_name not in class_names:
+                continue
+            if len(self.db_infos[class_name]) == 0:
+                if self.logger is not None:
+                    self.logger.info('Skip database sampling for %s: no db infos found' % class_name)
                 continue
             self.sample_class_num[class_name] = sample_num
             self.sample_groups[class_name] = {
